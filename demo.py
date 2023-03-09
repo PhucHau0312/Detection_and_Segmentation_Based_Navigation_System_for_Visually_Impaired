@@ -1,7 +1,6 @@
 import argparse
 import os
 import sys
-
 import cv2
 import numpy as np
 from tqdm import tqdm
@@ -12,11 +11,6 @@ from paddleseg.utils import get_sys_env, logger
 from inference import Predictor
 from PIL import Image 
 
-
-# unlabel = 0 
-# curb =  1 
-# crosswalk = 2 
-# road = 3 
 
 
 def parse_args():
@@ -107,6 +101,13 @@ def calculate_weight(area):
     return weight
 
 
+def makedirs(save_dir):
+    dirname = save_dir if os.path.isdir(save_dir) else \
+        os.path.dirname(save_dir)
+    if not os.path.exists(dirname):
+        os.makedirs(dirname)
+ 
+
 def fs_confidence(area, weight):
     walkable_area = area * weight 
     fs_confidence = np.sum(walkable_area)/(area.shape[0]*area.shape[1])
@@ -116,13 +117,6 @@ def fs_confidence(area, weight):
 def fd_confidence():
     fd_confidence = []
     return fd_confidence
-    
-
-def makedirs(save_dir):
-    dirname = save_dir if os.path.isdir(save_dir) else \
-        os.path.dirname(save_dir)
-    if not os.path.exists(dirname):
-        os.makedirs(dirname)
 
 
 def seg_image(args):
@@ -152,18 +146,40 @@ def seg_video(args):
     cap_out = cv2.VideoWriter(args.save_dir,
                               cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'), fps,
                               (width, height))
-
     logger.info("Input: video")
     logger.info("Create predictor...")
     predictor = Predictor(args)
     logger.info("Start predicting...")
+    
     with tqdm(total=total_frames) as pbar:
         img_frame_idx = 0
+        n_area = 7
+        all_fs_confidence = np.zeros((n_area,))
+        all_fd_confidence = np.zeros((n_area,))
         while cap_img.isOpened():
             ret_img, img = cap_img.read()
             if not ret_img:
                 break
             result, pred_img, add_img = predictor.run(img, weight=0.6)
+            
+            # all_walkable_area = (result==1).astype('int64') + (result==2).astype('int64')
+            all_walkable_area = (result==2).astype('int64') + (result==11).astype('int64')
+            print(np.unique(all_walkable_area))
+            area_width = int(round(all_walkable_area.shape[1]/n_area,0))
+
+            for i in range(n_area):
+                if i < n_area - 1:
+                    area = all_walkable_area[:,i*area_width:(i+1)*area_width]
+                else:
+                    area = all_walkable_area[:,i*area_width:]
+
+                weight = calculate_weight(area)
+                all_fs_confidence[i] = fs_confidence(area, weight)
+                if i > 0 and i < n_area:
+                    cv2.line(add_img, (i*area_width,0), (i*area_width,add_img.shape[0]), (0,255,0), 1)
+
+            print(all_fs_confidence)
+            # all_confidence = np.concatenate((all_fd_confidence, all_fs_confidence),axis=0).min(axis=0)
             cap_out.write(add_img)
             img_frame_idx += 1
             pbar.update(1)
@@ -192,8 +208,8 @@ def seg_camera(args):
         # all_walkable_area = (result==1).astype('int64') + (result==2).astype('int64')
         all_walkable_area = (result==2).astype('int64') + (result==11).astype('int64')
         print(np.unique(all_walkable_area))
-
         area_width = int(round(all_walkable_area.shape[1]/n_area,0))
+
         for i in range(n_area):
             if i < n_area - 1:
                 area = all_walkable_area[:,i*area_width:(i+1)*area_width]
@@ -214,13 +230,15 @@ def seg_camera(args):
             break
     cap_camera.release()
 
-
+# unlabel = 0 
+# curb =  1 
+# crosswalk = 2 
+# road = 3 
 
 if __name__ == "__main__":
     args = parse_args()
     env_info = get_sys_env()
     args.use_gpu = True if env_info['Paddle compiled with cuda'] and env_info['GPUs used'] else False
-
     makedirs(args.save_dir)
 
     if args.img_path is not None:
