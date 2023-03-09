@@ -99,10 +99,10 @@ def parse_args():
 
 def calculate_weight(area):
     height = area.shape[0]
-    arr = np.array((area.shape))
-    for i in len(arr.shape[1]):
-        arr[i] = np.arange(arr.shape[0])
     alpha = 2/(height - 1)
+    arr = np.zeros(area.shape)
+    for i in range(arr.shape[1]):
+        arr[:,i] = np.arange(arr.shape[0])
     weight = alpha * arr 
     return weight
 
@@ -181,8 +181,8 @@ def seg_camera(args):
     logger.info("Start predicting...")
 
     n_area = 7
-    all_fs_confidence = np.array((n_area,))
-    all_fd_confidence = np.array((n_area,))
+    all_fs_confidence = np.zeros((n_area,))
+    all_fd_confidence = np.zeros((n_area,))
     while cap_camera.isOpened():
         ret_img, img = cap_camera.read()
         if not ret_img:
@@ -191,23 +191,21 @@ def seg_camera(args):
         
         # all_walkable_area = (result==1).astype('int64') + (result==2).astype('int64')
         all_walkable_area = (result==2).astype('int64') + (result==11).astype('int64')
-
-        print(all_walkable_area.shape)
         print(np.unique(all_walkable_area))
 
         area_width = int(round(all_walkable_area.shape[1]/n_area,0))
-        print(area_width)
         for i in range(n_area):
-            # if i < n_area - 1:
-            #     area = all_walkable_area[:,i*area_width:(i+1)*area_width]
-            # else:
-            #     area = all_walkable_area[:,i*area_width:]
+            if i < n_area - 1:
+                area = all_walkable_area[:,i*area_width:(i+1)*area_width]
+            else:
+                area = all_walkable_area[:,i*area_width:]
 
-            # weight = calculate_weight(area)
-            # all_fs_confidence[i] = fs_confidence(area, weight)
+            weight = calculate_weight(area)
+            all_fs_confidence[i] = fs_confidence(area, weight)
             if i > 0 and i < n_area:
                 cv2.line(add_img, (i*area_width,0), (i*area_width,add_img.shape[0]), (0,255,0), 1)
         
+        print(all_fs_confidence)
         # all_confidence = np.concatenate((all_fd_confidence, all_fs_confidence),axis=0).min(axis=0)
         
         cv2.imshow('Add', add_img)
