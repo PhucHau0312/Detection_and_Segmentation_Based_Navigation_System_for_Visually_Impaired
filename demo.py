@@ -38,7 +38,7 @@ def parse_args():
     parser.add_argument(
         '--device',
         choices=['cpu', 'gpu', 'xpu', 'npu'],
-        default="cpu",
+        default="gpu",
         help="Select which device to inference, defaults to cpu.")
 
     parser.add_argument(
@@ -86,7 +86,7 @@ def parse_args():
         '--save_dir',
         help='The directory for saving the inference results',
         type=str,
-        default='./output')
+        default='./output/')
 
     return parser.parse_args()
 
@@ -119,6 +119,23 @@ def fd_confidence():
     return fd_confidence
 
 
+def walking_guide(confidence, direction):
+    middle = len(confidence)//2
+    n = len(direction)
+    diff = (len(confidence) - n)//2
+    if confidence[middle] > 0.5:
+        text = direction[n//2]
+    elif np.max(confidence) > 0.2:
+        pos = np.argmax(confidence)
+        if pos < middle - diff:
+            text = direction[0]
+        elif pos > middle + diff:
+            text = direction[n-1]
+        else: 
+            text = direction[pos-diff]
+    return text
+
+
 def seg_image(args):
     assert os.path.exists(args.img_path), \
         "The --img_path is not existed: {}.".format(args.img_path)
@@ -127,9 +144,45 @@ def seg_image(args):
     logger.info("Create predictor...")
     predictor = Predictor(args)
     logger.info("Start predicting...")
+
+    n_areas = 7
+    pre_text = None
+    play = None
+    all_fs_confidence = np.zeros((n_areas,))
+    all_fd_confidence = np.zeros((n_areas,))
+
     img = cv2.imread(args.img_path)
     result, pred_img, add_img = predictor.run(img, weight=0.6)
-    cv2.imwrite(args.save_dir, add_img)
+    all_walkable_area = (result==1).astype('int64') + (result==2).astype('int64')
+    print(np.unique(all_walkable_area))
+    area_width = int(round(all_walkable_area.shape[1]/n_areas))
+    print(area_width)
+    for i in range(n_areas):
+        if i < n_areas - 1:
+            area = all_walkable_area[:,i*area_width:(i+1)*area_width]
+        else:
+            area = all_walkable_area[:,i*area_width:]
+
+        weight = calculate_weight(area)
+        all_fs_confidence[i] = fs_confidence(area, weight)
+
+    print(all_fs_confidence)
+    # all_confidence = np.concatenate((all_fd_confidence, all_fs_confidence),axis=0).min(axis=0)
+    # text = walking_guide(all_confidence)
+    text = walking_guide(all_fs_confidence, direction)
+    if text == 'go straight' and text == pre_text:
+        play = False
+    print(play)
+    pre_text = text 
+    cv2.putText(add_img, text, (50, 100), 0, 1, [0, 255, 0], thickness=2, lineType=cv2.LINE_AA)
+
+    for i in range(n_areas):
+        if i > 0 and i < n_areas:
+            cv2.line(add_img, (i*area_width,0), (i*area_width,add_img.shape[0]), (0,0,0), 2)
+        cv2.putText(add_img, str(round(all_fs_confidence[i], 2)), (i*area_width+area_width//3, 600), 0, 1, [0, 0, 255], thickness=2, lineType=cv2.LINE_AA)
+    cv2.imshow('Result', add_img)
+    cv2.waitKey(0)
+    cv2.imwrite(args.save_dir + args.img_path, add_img)
 
 
 def seg_video(args):
@@ -153,37 +206,48 @@ def seg_video(args):
     
     with tqdm(total=total_frames) as pbar:
         img_frame_idx = 0
-        n_area = 7
-        all_fs_confidence = np.zeros((n_area,))
-        all_fd_confidence = np.zeros((n_area,))
+        n_areas = 7
+        pre_text = None
+        play = None
+        all_fs_confidence = np.zeros((n_areas,))
+        all_fd_confidence = np.zeros((n_areas,))
         while cap_img.isOpened():
             ret_img, img = cap_img.read()
             if not ret_img:
                 break
             result, pred_img, add_img = predictor.run(img, weight=0.6)
             
-            # all_walkable_area = (result==1).astype('int64') + (result==2).astype('int64')
-            all_walkable_area = (result==2).astype('int64') + (result==11).astype('int64')
+            all_walkable_area = (result==1).astype('int64') + (result==2).astype('int64')
             print(np.unique(all_walkable_area))
-            area_width = int(round(all_walkable_area.shape[1]/n_area,0))
+            area_width = int(round(all_walkable_area.shape[1]/n_areas))
 
-            for i in range(n_area):
-                if i < n_area - 1:
+            for i in range(n_areas):
+                if i < n_areas - 1:
                     area = all_walkable_area[:,i*area_width:(i+1)*area_width]
                 else:
                     area = all_walkable_area[:,i*area_width:]
 
                 weight = calculate_weight(area)
                 all_fs_confidence[i] = fs_confidence(area, weight)
-                if i > 0 and i < n_area:
-                    cv2.line(add_img, (i*area_width,0), (i*area_width,add_img.shape[0]), (0,255,0), 1)
 
             print(all_fs_confidence)
             # all_confidence = np.concatenate((all_fd_confidence, all_fs_confidence),axis=0).min(axis=0)
+            # text = walking_guide(all_confidence)
+            text = walking_guide(all_fs_confidence, direction)
+            if text == 'go straight' and text == pre_text:
+                play = False
+            print(play)
+            pre_text = text 
+            cv2.putText(add_img, text, (50, 100), 0, 1, [0, 255, 0], thickness=2, lineType=cv2.LINE_AA)
+
+            for i in range(n_areas):
+                if i > 0 and i < n_areas:
+                    cv2.line(add_img, (i*area_width,0), (i*area_width,add_img.shape[0]), (0,0,0), 2)
+                cv2.putText(add_img, str(round(all_fs_confidence[i], 2)), (i*area_width+area_width//3, 600), 0, 1, [0, 0, 255], thickness=2, lineType=cv2.LINE_AA)
+            
             cap_out.write(add_img)
             img_frame_idx += 1
             pbar.update(1)
-
     cap_img.release()
     cap_out.release()
 
@@ -196,34 +260,46 @@ def seg_camera(args):
     predictor = Predictor(args)
     logger.info("Start predicting...")
 
-    n_area = 7
-    all_fs_confidence = np.zeros((n_area,))
-    all_fd_confidence = np.zeros((n_area,))
+    n_areas = 7
+    pre_text = None
+    play = None
+    all_fs_confidence = np.zeros((n_areas,))
+    all_fd_confidence = np.zeros((n_areas,))
     while cap_camera.isOpened():
         ret_img, img = cap_camera.read()
         if not ret_img:
             break
         result, pred_img, add_img = predictor.run(img, weight=0.6) 
         
-        # all_walkable_area = (result==1).astype('int64') + (result==2).astype('int64')
-        all_walkable_area = (result==2).astype('int64') + (result==11).astype('int64')
+        all_walkable_area = (result==1).astype('int64') + (result==2).astype('int64')
         print(np.unique(all_walkable_area))
-        area_width = int(round(all_walkable_area.shape[1]/n_area,0))
+        area_width = int(round(all_walkable_area.shape[1]/n_areas))
 
-        for i in range(n_area):
-            if i < n_area - 1:
+        for i in range(n_areas):
+            if i < n_areas - 1:
                 area = all_walkable_area[:,i*area_width:(i+1)*area_width]
             else:
                 area = all_walkable_area[:,i*area_width:]
 
             weight = calculate_weight(area)
             all_fs_confidence[i] = fs_confidence(area, weight)
-            if i > 0 and i < n_area:
-                cv2.line(add_img, (i*area_width,0), (i*area_width,add_img.shape[0]), (0,255,0), 1)
-        
+
         print(all_fs_confidence)
         # all_confidence = np.concatenate((all_fd_confidence, all_fs_confidence),axis=0).min(axis=0)
-        
+        # text = walking_guide(all_confidence)
+        all_confidence = np.concatenate((all_fd_confidence, all_fs_confidence),axis=0).min(axis=0)
+        text = walking_guide(all_fs_confidence, direction)
+        if text == 'go straight' and text == pre_text:
+            play = False
+        print(play)
+        pre_text = text
+        cv2.putText(add_img, text, (50, 100), 0, 1, [0, 255, 0], thickness=2, lineType=cv2.LINE_AA)
+
+        for i in range(n_areas):
+            if i > 0 and i < n_areas:
+                cv2.line(add_img, (i*area_width,0), (i*area_width,add_img.shape[0]), (0,0,0), 2)
+            cv2.putText(add_img, str(all_fs_confidence[i]), (i*area_width+area_width//3, 1000), 0, 1, [0, 0, 255], thickness=2, lineType=cv2.LINE_AA)
+            
         cv2.imshow('Add', add_img)
         cv2.imshow('Predict', pred_img)
         if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -231,7 +307,7 @@ def seg_camera(args):
     cap_camera.release()
 
 # unlabel = 0 
-# curb =  1 
+# sidewalk =  1 
 # crosswalk = 2 
 # road = 3 
 
@@ -241,6 +317,7 @@ if __name__ == "__main__":
     args.use_gpu = True if env_info['Paddle compiled with cuda'] and env_info['GPUs used'] else False
     makedirs(args.save_dir)
 
+    direction = ['left', 'slightly left', 'go straight', 'slightly right', 'right']
     if args.img_path is not None:
         seg_image(args)
     elif args.video_path is not None:
