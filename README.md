@@ -1,1 +1,1 @@
-# Segmentation_Based_System_for_Visually_Impaired
+# Segmentation_Based_Navigation_System_for_Visually_Impaired
