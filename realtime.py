@@ -28,7 +28,7 @@ def parse_args():
     parser.add_argument(
         "--config_file",
         help="The detection config file.",
-        default='./cfg/yolov4-tiny-use.cfg',
+        default='./configs/yolov4-tiny-use.cfg',
         type=str)
     parser.add_argument(
         "--data_file",
